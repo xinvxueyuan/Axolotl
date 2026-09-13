@@ -20,9 +20,9 @@ jobs:
     runs-on: ubuntu-latest
     # Fork PRs get a GITHUB_TOKEN that cannot write issue comments on the base
     # repository ("Resource not accessible by integration"). Skip the job there
-    # instead of failing a check the contributor cannot fix. Known limitation:
-    # outside contributors do not receive the bot changelog template; a
-    # maintainer can still post it by hand or via workflow_dispatch.
+    # instead of failing a check the contributor cannot fix.
+    # workflow_dispatch is always allowed so a maintainer can target a fork PR
+    # by number; posting may still soft-skip if the token is forbidden.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -64,11 +64,12 @@ jobs:
               return;
             }
 
-            // Soft-succeed only when the token is forbidden. A 404 on a known
-            // PR number is a real failure (missing PR / bad dispatch input).
             const isForbidden = (error) => error.status === 403 || error.status === 401;
+            // Secondary rate limits are also 403; never treat those as "skip".
+            const isRateLimit = (error) =>
+              error.status === 403 && /rate limit/i.test(String(error.message ?? ''));
 
-            // Get PR details (need base ref for child PR detection)
+            // Get PR details (need head repo + base ref for child PR detection)
             let pr;
             try {
               ({ data: pr } = await github.rest.pulls.get({
@@ -77,6 +78,10 @@ jobs:
                 pull_number: prNumber,
               }));
             } catch (error) {
+              if (isRateLimit(error)) {
+                core.setFailed(`GitHub rate limit while reading PR #${prNumber}: ${error.message}`);
+                return;
+              }
               if (isForbidden(error)) {
                 core.notice(`Skipping changelog comment on PR #${prNumber}: token cannot read the pull request (${error.status}).`);
                 return;
@@ -84,13 +89,23 @@ jobs:
               throw error;
             }
 
-            // Same repository as the workflow? Forks cannot receive comments with this token.
             const headRepo = pr.head.repo?.full_name;
             const baseRepo = `${context.repo.owner}/${context.repo.repo}`;
-            if (headRepo && headRepo !== baseRepo) {
-              core.notice(`Skipping changelog comment on fork PR #${prNumber} (${headRepo}).`);
-              return;
-            }
+            const isForkPr = Boolean(headRepo) && headRepo !== baseRepo;
+
+            // Soft-succeed only for fork PRs when the token is forbidden.
+            // A same-repo 403 means the workflow lost issues:write — fail hard.
+            const softSkipForbidden = (error, action) => {
+              if (isRateLimit(error)) {
+                core.setFailed(`GitHub rate limit while ${action} on PR #${prNumber}: ${error.message}`);
+                return true;
+              }
+              if (isForkPr && isForbidden(error)) {
+                core.notice(`Skipping changelog comment on fork PR #${prNumber} (${headRepo}): token cannot ${action} (${error.status}).`);
+                return true;
+              }
+              return false;
+            };
 
             // Check if bot comment already exists
             let comments;
@@ -101,10 +116,7 @@ jobs:
                 issue_number: prNumber,
               }));
             } catch (error) {
-              if (isForbidden(error)) {
-                core.notice(`Skipping changelog comment on PR #${prNumber}: token cannot list comments (${error.status}).`);
-                return;
-              }
+              if (softSkipForbidden(error, 'list comments')) return;
               throw error;
             }
 
@@ -123,10 +135,7 @@ jobs:
                 body: template,
               });
             } catch (error) {
-              if (isForbidden(error)) {
-                core.notice(`Skipping changelog comment on PR #${prNumber}: token cannot create comments (${error.status}).`);
-                return;
-              }
+              if (softSkipForbidden(error, 'create comments')) return;
               throw error;
             }
 
@@ -171,10 +180,7 @@ jobs:
                   body: `${mergedMarker}\n> [!NOTE]\n> This changelog has been merged into the changelog for #${parentPR.number}\n\n${childChangelogComment.body}`,
                 });
               } catch (error) {
-                if (isForbidden(error)) {
-                  core.notice(`Could not mark child changelog on PR #${prNumber} as merged (${error.status}).`);
-                  return;
-                }
+                if (softSkipForbidden(error, 'update comments')) return;
                 throw error;
               }
             }
