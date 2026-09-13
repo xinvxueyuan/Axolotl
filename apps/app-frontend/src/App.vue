@@ -206,7 +206,8 @@ const discoverContentPath = computed(() => discoverContentTarget(route))
 
 function getPageTransitionKey(route: RouteLocationNormalizedLoaded) {
 	const transitionGroup = route.meta.pageTransitionGroup
-	if (typeof transitionGroup !== 'string') return route.fullPath
+	// Path (not fullPath): query-only changes reuse the same SPA page instance.
+	if (typeof transitionGroup !== 'string') return route.path
 
 	const routeId = route.params.id
 	if (routeId !== undefined) {
@@ -1778,16 +1779,19 @@ function syncDiscordActivity(to: RouteLocationNormalizedLoaded) {
 }
 
 router.afterEach((to, from, failure) => {
-	if (!failure) void invoke('lightweight_mode_set_route', { route: to.fullPath })
-	trackEvent('PageView', {
-		path: to.path,
-		fromPath: from.path,
-		failed: failure,
+	// Side-channel work must not compete with the page-enter paint / remount.
+	runWhenIdle(() => {
+		if (!failure) void invoke('lightweight_mode_set_route', { route: to.fullPath })
+		trackEvent('PageView', {
+			path: to.path,
+			fromPath: from.path,
+			failed: failure,
+		})
+		if (!failure) {
+			void directLinkSync?.()
+			if (stateInitialized.value) syncDiscordActivity(to)
+		}
 	})
-	if (!failure) {
-		void directLinkSync?.()
-		if (stateInitialized.value) syncDiscordActivity(to)
-	}
 	setTimeout(() => {
 		if (!suspensePending && stateInitialized.value) {
 			if (initialLoadToken) {

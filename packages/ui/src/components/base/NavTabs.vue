@@ -286,21 +286,25 @@ function applySliderPosition(
 }
 
 function positionSlider() {
-	const newPosition = measureActiveTab()
-	if (!newPosition) return
+	// Measure after layout settles so remount/scroll from a left-nav switch
+	// cannot interleave offset reads with writes (forced reflow).
+	requestAnimationFrame(() => {
+		const newPosition = measureActiveTab()
+		if (!newPosition) return
 
-	// First paint: snap so the pill never slides in from the default 4/4 inset
-	// (that read as a left jump after browse finished loading).
-	if (!sliderReady.value) {
-		transitionsEnabled.value = false
-		applySliderPosition(newPosition, false)
-		requestAnimationFrame(() => {
-			transitionsEnabled.value = true
-		})
-		return
-	}
+		// First paint: snap so the pill never slides in from the default 4/4 inset
+		// (that read as a left jump after browse finished loading).
+		if (!sliderReady.value) {
+			transitionsEnabled.value = false
+			applySliderPosition(newPosition, false)
+			requestAnimationFrame(() => {
+				transitionsEnabled.value = true
+			})
+			return
+		}
 
-	applySliderPosition(newPosition, true)
+		applySliderPosition(newPosition, true)
+	})
 }
 
 function snapSliderToActiveTab() {

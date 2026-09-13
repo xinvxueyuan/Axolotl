@@ -517,8 +517,11 @@ export default new createRouter({
 			return false
 		}
 		if (to.path === from.path) return
-		// Sometimes Vue's scroll behavior is not working as expected, so we need to manually scroll to top (especially on Linux)
-		document.querySelector('.app-viewport')?.scrollTo(0, 0)
+		// Scroll after the next frame so it does not interleave with the
+		// page-enter paint / remount layout (avoids forced reflow mid-switch).
+		requestAnimationFrame(() => {
+			document.querySelector('.app-viewport')?.scrollTo(0, 0)
+		})
 		return {
 			el: '.app-viewport',
 			top: 0,

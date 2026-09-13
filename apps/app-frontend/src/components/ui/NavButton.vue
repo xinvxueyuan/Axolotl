@@ -71,11 +71,11 @@ defineOptions({
 </script>
 
 <style lang="scss" scoped>
+/* box-shadow (not filter: drop-shadow) so active state does not force a
+   costly compositing layer / re-raster on every left-nav switch. */
 .router-link-active,
 .subpage-active {
-	svg {
-		filter: drop-shadow(0 0 0.5rem black);
-	}
+	box-shadow: 0 0 0.5rem rgba(0, 0, 0, 0.55);
 }
 
 .router-link-active {
