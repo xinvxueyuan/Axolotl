@@ -33,7 +33,6 @@ import {
 	type DependencyGraph,
 	type DependencyGraphNode,
 	getDependencyTreeRows,
-	getDependencyNodeDepths,
 	getRelatedNodeIds,
 	layoutDependencyGraph,
 } from './dependency-graph'
@@ -101,11 +100,11 @@ const messages = defineMessages({
 	},
 	graphDirection: {
 		id: 'app.instance.dependencies.graph-direction',
-		defaultMessage: 'Arrows point from dependent content to the content it uses.',
+		defaultMessage: 'Stable relationship clusters. Arrows point from dependent content to the content it uses.',
 	},
 	graphHint: {
 		id: 'app.instance.dependencies.graph-hint',
-		defaultMessage: 'Drag the canvas to explore. Drag a card to arrange it.',
+		defaultMessage: 'Drag the canvas to explore. Cards stay where you place them.',
 	},
 	reference: { id: 'app.instance.dependencies.reference', defaultMessage: 'Referenced elsewhere' },
 	cycleReference: {
@@ -165,8 +164,6 @@ const graphViewport = ref<HTMLElement | null>(null)
 const graphCanvas = ref<HTMLElement | null>(null)
 const graphEdgesCanvas = ref<HTMLCanvasElement | null>(null)
 const dragState = ref<{ kind: 'pan' | 'node'; id?: string }>()
-const dynamicPositions = ref(new Map<string, Point>())
-const pinnedNodeIds = ref(new Set<string>())
 let activePan: Point | undefined
 let lastPointerPosition: Point | undefined
 let pendingPointerMove: { dx: number; dy: number } | undefined
@@ -175,8 +172,6 @@ let constrainFrame: number | undefined
 let viewportObserver: ResizeObserver | undefined
 let fitFrame: number | undefined
 let edgeFrame: number | undefined
-let forceWorker: Worker | undefined
-let stableLayoutFrames = 0
 
 const graph = computed<DependencyGraph>(() => buildDependencyGraph(items.value))
 const typeOptions = computed(() => [
@@ -285,16 +280,9 @@ const graphLayout = computed(() =>
 	layoutDependencyGraph(graph.value, graphNodeIds.value, nodeOffsets.value),
 )
 
-const dynamicGraphNodes = computed(() =>
-	graphLayout.value.nodes.map((node) => ({
-		...node,
-		...(dynamicPositions.value.get(node.id) ?? { x: node.x, y: node.y }),
-	})),
-)
-
 const visibleGraphNodes = computed(() => {
 	const viewport = graphViewport.value
-	if (!viewport || zoom.value < 0.58) return dynamicGraphNodes.value
+	if (!viewport || zoom.value < 0.58) return graphLayout.value.nodes
 	const overscan = 180 / zoom.value
 	const left = (-pan.value.x - overscan) / zoom.value
 	const top = (-pan.value.y - overscan) / zoom.value
@@ -307,7 +295,7 @@ const visibleGraphNodes = computed(() => {
 					.flatMap((edge) => [edge.source, edge.target]),
 			)
 		: new Set<string>()
-	return dynamicGraphNodes.value.filter(
+	return graphLayout.value.nodes.filter(
 		(node) =>
 			related.has(node.id) ||
 			(node.x + dependencyGraphMetrics.nodeWidth >= left &&
@@ -411,7 +399,7 @@ function drawGraphEdges() {
 	const activeColor = styles.getPropertyValue('--color-brand').trim() || '#8bd450'
 	const mutedColor = styles.getPropertyValue('--surface-5').trim() || '#697384'
 	const orangeColor = styles.getPropertyValue('--color-orange').trim() || '#f2a65a'
-	const positions = new Map(dynamicGraphNodes.value.map((node) => [node.id, node]))
+	const positions = new Map(graphLayout.value.nodes.map((node) => [node.id, node]))
 	for (const edge of graphLayout.value.edges) {
 		const source = positions.get(edge.source)
 		const target = positions.get(edge.target)
@@ -447,78 +435,6 @@ function drawGraphEdges() {
 		context.restore()
 	}
 	context.globalAlpha = 1
-}
-
-function stopForceLayout() {
-	forceWorker?.postMessage({ type: 'stop' })
-	forceWorker?.terminate()
-	forceWorker = undefined
-	stableLayoutFrames = 0
-}
-
-function startForceLayout() {
-	stopForceLayout()
-	if (viewMode.value !== 'graph' || graphLayout.value.nodes.length === 0) return
-	if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-		scheduleEdgeDraw()
-		return
-	}
-	try {
-		forceWorker = new Worker(new URL('./dependency-graph.worker.ts', import.meta.url), {
-			type: 'module',
-		})
-	} catch {
-		return
-	}
-	const depths = getDependencyNodeDepths(graph.value, graphNodeIds.value)
-	let lastUpdate = 0
-	let previous = new Map<string, Point>()
-	forceWorker.onmessage = (
-		event: MessageEvent<{
-			type: 'positions'
-			positions: Array<{ id: string; x: number; y: number }>
-		}>,
-	) => {
-		if (event.data.type !== 'positions') return
-		const now = performance.now()
-		const next = new Map(
-			event.data.positions.map((position) => [position.id, { x: position.x, y: position.y }]),
-		)
-		const maxDelta = Math.max(
-			0,
-			...event.data.positions.map((position) => {
-				const before = previous.get(position.id)
-				return before ? Math.hypot(position.x - before.x, position.y - before.y) : 100
-			}),
-		)
-		previous = next
-		if (maxDelta < 0.45) stableLayoutFrames += 1
-		else stableLayoutFrames = 0
-		if (now - lastUpdate >= 50 || stableLayoutFrames >= 8) {
-			lastUpdate = now
-			dynamicPositions.value = next
-			scheduleEdgeDraw()
-		}
-		if (stableLayoutFrames >= 8) stopForceLayout()
-	}
-	forceWorker.postMessage({
-		type: 'start',
-		nodes: graphLayout.value.nodes.map((node) => {
-			const position = dynamicPositions.value.get(node.id) ?? { x: node.x, y: node.y }
-			return {
-				id: node.id,
-				x: position.x,
-				y: position.y,
-				vx: 0,
-				vy: 0,
-				depth: depths.get(node.id) ?? 0,
-				pinned: pinnedNodeIds.value.has(node.id),
-			}
-		}),
-		edges: graphLayout.value.edges.map(({ source, target }) => ({ source, target })),
-		width: graphLayout.value.width,
-		height: graphLayout.value.height,
-	})
 }
 
 function constrainedPan(nextPan: Point, nextZoom = zoom.value): Point {
@@ -591,13 +507,9 @@ function scheduleGraphFit() {
 }
 
 function resetGraphView() {
-	stopForceLayout()
 	nodeOffsets.value = new Map()
-	dynamicPositions.value = new Map()
-	pinnedNodeIds.value = new Set()
 	nextTick(() => {
 		scheduleGraphFit()
-		startForceLayout()
 	})
 }
 
@@ -665,20 +577,15 @@ function applyPointerMove() {
 		return
 	}
 	if (!state.id) return
-	const node = dynamicGraphNodes.value.find((candidate) => candidate.id === state.id)
+	const node = graphLayout.value.nodes.find((candidate) => candidate.id === state.id)
 	if (!node) return
-	const nextPositions = new Map(dynamicPositions.value)
-	const position = nextPositions.get(state.id) ?? { x: node.x, y: node.y }
-	const nextPosition = {
-		x: position.x + movement.dx / zoom.value,
-		y: position.y + movement.dy / zoom.value,
-	}
-	nextPositions.set(state.id, nextPosition)
-	dynamicPositions.value = nextPositions
-	const nextPinned = new Set(pinnedNodeIds.value)
-	nextPinned.add(state.id)
-	pinnedNodeIds.value = nextPinned
-	forceWorker?.postMessage({ type: 'pin', id: state.id, ...nextPosition })
+	const nextOffsets = new Map(nodeOffsets.value)
+	const offset = nextOffsets.get(state.id) ?? { x: 0, y: 0 }
+	nextOffsets.set(state.id, {
+		x: offset.x + movement.dx / zoom.value,
+		y: offset.y + movement.dy / zoom.value,
+	})
+	nodeOffsets.value = nextOffsets
 	scheduleEdgeDraw()
 }
 
@@ -756,8 +663,6 @@ function show(contentItems: ContentItem[]) {
 	viewMode.value = 'tree'
 	direction.value = 'requiredBy'
 	nodeOffsets.value = new Map()
-	dynamicPositions.value = new Map()
-	pinnedNodeIds.value = new Set()
 	expandedIds.value = new Set(
 		treeRootIdsForDirection(buildDependencyGraph(contentItems), 'requiredBy'),
 	)
@@ -772,11 +677,8 @@ function setItems(contentItems: ContentItem[]) {
 	selectedNodeId.value = ids.has(selectedNodeId.value ?? '') ? selectedNodeId.value : undefined
 	expandedIds.value = new Set([...expandedIds.value].filter((id) => ids.has(id)))
 	nodeOffsets.value = new Map([...nodeOffsets.value].filter(([id]) => ids.has(id)))
-	dynamicPositions.value = new Map([...dynamicPositions.value].filter(([id]) => ids.has(id)))
-	pinnedNodeIds.value = new Set([...pinnedNodeIds.value].filter((id) => ids.has(id)))
 	nextTick(() => {
 		scheduleGraphFit()
-		startForceLayout()
 	})
 }
 
@@ -792,21 +694,17 @@ watch(viewMode, (mode) => {
 	if (mode === 'graph') {
 		nextTick(() => {
 			scheduleGraphFit()
-			startForceLayout()
 		})
-	} else {
-		stopForceLayout()
 	}
 })
 
 watch(graphStructureKey, () => {
 	nextTick(() => {
 		scheduleGraphFit()
-		startForceLayout()
 	})
 })
 
-watch(dynamicPositions, scheduleEdgeDraw)
+watch(graphLayout, scheduleEdgeDraw)
 watch(selectedNodeId, scheduleEdgeDraw)
 
 watch(graphViewport, (viewport) => {
@@ -826,7 +724,6 @@ onBeforeUnmount(() => {
 	if (pointerFrame) cancelAnimationFrame(pointerFrame)
 	if (constrainFrame) cancelAnimationFrame(constrainFrame)
 	if (edgeFrame) cancelAnimationFrame(edgeFrame)
-	stopForceLayout()
 })
 
 defineExpose({ show, hide, setItems })

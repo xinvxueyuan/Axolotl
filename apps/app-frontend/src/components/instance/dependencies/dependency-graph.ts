@@ -540,28 +540,57 @@ function layoutComponent(
 ): ComponentLayout {
 	const visibleIds = new Set(nodeIds)
 	const nodesToLayout = graph.nodes.filter((node) => visibleIds.has(node.id))
-	const depths = nodeDepths(graph, visibleIds)
-	const groups = new Map<number, DependencyGraphNode[]>()
-	for (const node of nodesToLayout) {
-		const depth = depths.get(node.id) ?? 0
-		const group = groups.get(depth) ?? []
-		group.push(node)
-		groups.set(depth, group)
+	const degree = new Map<string, number>()
+	const adjacency = new Map<string, Set<string>>()
+	for (const node of nodesToLayout) adjacency.set(node.id, new Set())
+	for (const edge of graph.edges) {
+		if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) continue
+		adjacency.get(edge.source)?.add(edge.target)
+		adjacency.get(edge.target)?.add(edge.source)
 	}
-
-	const ranks = new Map(
-		[...groups.keys()].sort((a, b) => a - b).map((depth, rank) => [depth, rank]),
-	)
+	for (const [id, neighbors] of adjacency) degree.set(id, neighbors.size)
+	const hub = [...nodesToLayout].sort(
+		(left, right) =>
+			(degree.get(right.id) ?? 0) - (degree.get(left.id) ?? 0) ||
+			left.title.localeCompare(right.title) ||
+			left.id.localeCompare(right.id),
+	)[0]
+	const distances = new Map<string, number>(hub ? [[hub.id, 0]] : [])
+	const queue = hub ? [hub.id] : []
+	for (let index = 0; index < queue.length; index += 1) {
+		const id = queue[index]
+		for (const neighbor of adjacency.get(id) ?? []) {
+			if (distances.has(neighbor)) continue
+			distances.set(neighbor, (distances.get(id) ?? 0) + 1)
+			queue.push(neighbor)
+		}
+	}
+	const rings = new Map<number, DependencyGraphNode[]>()
+	for (const node of nodesToLayout) {
+		const distance = distances.get(node.id) ?? 1
+		const ring = rings.get(distance) ?? []
+		ring.push(node)
+		rings.set(distance, ring)
+	}
 	const positions = new Map<string, NodePosition>()
-	for (const [depth, group] of groups) {
-		group.sort((left, right) => left.title.localeCompare(right.title))
-		const rank = ranks.get(depth) ?? 0
-		group.forEach((node, index) => {
-			const offset = nodeOffsets.get(node.id) ?? { x: 0, y: 0 }
-			positions.set(node.id, {
-				x: offset.x + rank * (dependencyGraphMetrics.nodeWidth + dependencyGraphMetrics.layerGap),
-				y: offset.y + index * (dependencyGraphMetrics.nodeHeight + dependencyGraphMetrics.rowGap),
-			})
+	const place = (node: DependencyGraphNode, x: number, y: number) => {
+		positions.set(node.id, {
+			x: x - dependencyGraphMetrics.nodeWidth / 2,
+			y: y - dependencyGraphMetrics.nodeHeight / 2,
+		})
+	}
+	if (hub) place(hub, 0, 0)
+	for (const [distance, ring] of [...rings.entries()].sort(([left], [right]) => left - right)) {
+		if (distance === 0) continue
+		ring.sort((left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id))
+		const spacing = dependencyGraphMetrics.nodeWidth + 56
+		const radius = Math.max(
+			dependencyGraphMetrics.nodeWidth + dependencyGraphMetrics.layerGap / 2,
+			(ring.length * spacing) / (Math.PI * 2),
+		) * distance
+		ring.forEach((node, index) => {
+			const angle = -Math.PI / 2 + (index / ring.length) * Math.PI * 2
+			place(node, Math.cos(angle) * radius, Math.sin(angle) * radius)
 		})
 	}
 
@@ -570,7 +599,11 @@ function layoutComponent(
 	const minY = Math.min(...rawPositions.map((position) => position.y))
 	const normalizedPositions = new Map<string, NodePosition>()
 	for (const [id, position] of positions) {
-		normalizedPositions.set(id, { x: position.x - minX, y: position.y - minY })
+		const offset = nodeOffsets.get(id) ?? { x: 0, y: 0 }
+		normalizedPositions.set(id, {
+			x: position.x - minX + offset.x,
+			y: position.y - minY + offset.y,
+		})
 	}
 
 	const nodes = nodesToLayout.map((node) => ({ ...node, ...normalizedPositions.get(node.id)! }))

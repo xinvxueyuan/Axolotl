@@ -156,6 +156,31 @@ test('returns the complete relationship context for a filtered node', () => {
 	assert.deepEqual(related, new Set([nodeId('a'), nodeId('b'), nodeId('c')]))
 })
 
+test('uses a deterministic high-degree hub and stable relationship rings', () => {
+	const graph = buildDependencyGraph([
+		item('hub', '1', { requires: [ref('a'), ref('b'), ref('c')] }),
+		item('a', '1'),
+		item('b', '1'),
+		item('c', '1'),
+	])
+	const first = layoutDependencyGraph(graph)
+	const second = layoutDependencyGraph(graph)
+	assert.deepEqual(
+		first.nodes.map(({ id, x, y }) => ({ id, x, y })),
+		second.nodes.map(({ id, x, y }) => ({ id, x, y })),
+	)
+	const hub = first.nodes.find((node) => node.id === nodeId('hub'))!
+	const leaves = first.nodes.filter((node) => node.id !== nodeId('hub'))
+	const center = {
+		x: (Math.min(...first.nodes.map((node) => node.x)) + Math.max(...first.nodes.map((node) => node.x))) / 2,
+		y: (Math.min(...first.nodes.map((node) => node.y)) + Math.max(...first.nodes.map((node) => node.y))) / 2,
+	}
+	assert.ok(Math.hypot(hub.x - center.x, hub.y - center.y) < Math.min(
+		...leaves.map((node) => Math.hypot(node.x - center.x, node.y - center.y)),
+	))
+	assert.equal(new Set(leaves.map((node) => `${node.x}:${node.y}`)).size, leaves.length)
+})
+
 test('connects each edge from a source output port to a target input port with an HTML connector', () => {
 	const graph = buildDependencyGraph([item('a', '1', { requires: [ref('b')] }), item('b', '1')])
 	const layout = layoutDependencyGraph(graph)
