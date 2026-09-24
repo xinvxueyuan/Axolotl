@@ -1029,7 +1029,7 @@ defineExpose({ show, hide, setItems })
 										:class="[
 											nodeStatusClass(node),
 											selectedNodeId && selectedNodeId !== node.id ? 'opacity-35' : '',
-											zoom < 0.58 ? 'dependency-graph-node-compact' : '',
+										zoom < 0.34 ? 'dependency-graph-node-compact' : '',
 											draggedNodeId === node.id ? 'z-10 scale-[1.03] shadow-xl' : '',
 										]"
 										:style="{ left: `${node.x}px`, top: `${node.y}px` }"

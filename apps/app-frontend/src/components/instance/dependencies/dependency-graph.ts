@@ -540,57 +540,21 @@ function layoutComponent(
 ): ComponentLayout {
 	const visibleIds = new Set(nodeIds)
 	const nodesToLayout = graph.nodes.filter((node) => visibleIds.has(node.id))
-	const degree = new Map<string, number>()
-	const adjacency = new Map<string, Set<string>>()
-	for (const node of nodesToLayout) adjacency.set(node.id, new Set())
-	for (const edge of graph.edges) {
-		if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) continue
-		adjacency.get(edge.source)?.add(edge.target)
-		adjacency.get(edge.target)?.add(edge.source)
-	}
-	for (const [id, neighbors] of adjacency) degree.set(id, neighbors.size)
-	const hub = [...nodesToLayout].sort(
-		(left, right) =>
-			(degree.get(right.id) ?? 0) - (degree.get(left.id) ?? 0) ||
-			left.title.localeCompare(right.title) ||
-			left.id.localeCompare(right.id),
-	)[0]
-	const distances = new Map<string, number>(hub ? [[hub.id, 0]] : [])
-	const queue = hub ? [hub.id] : []
-	for (let index = 0; index < queue.length; index += 1) {
-		const id = queue[index]
-		for (const neighbor of adjacency.get(id) ?? []) {
-			if (distances.has(neighbor)) continue
-			distances.set(neighbor, (distances.get(id) ?? 0) + 1)
-			queue.push(neighbor)
-		}
-	}
-	const rings = new Map<number, DependencyGraphNode[]>()
+	const depths = nodeDepths(graph, visibleIds)
+	const columns = new Map<number, DependencyGraphNode[]>()
 	for (const node of nodesToLayout) {
-		const distance = distances.get(node.id) ?? 1
-		const ring = rings.get(distance) ?? []
-		ring.push(node)
-		rings.set(distance, ring)
+		const column = columns.get(depths.get(node.id) ?? 0) ?? []
+		column.push(node)
+		columns.set(depths.get(node.id) ?? 0, column)
 	}
 	const positions = new Map<string, NodePosition>()
-	const place = (node: DependencyGraphNode, x: number, y: number) => {
-		positions.set(node.id, {
-			x: x - dependencyGraphMetrics.nodeWidth / 2,
-			y: y - dependencyGraphMetrics.nodeHeight / 2,
-		})
-	}
-	if (hub) place(hub, 0, 0)
-	for (const [distance, ring] of [...rings.entries()].sort(([left], [right]) => left - right)) {
-		if (distance === 0) continue
-		ring.sort((left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id))
-		const spacing = dependencyGraphMetrics.nodeWidth + 56
-		const radius = Math.max(
-			dependencyGraphMetrics.nodeWidth + dependencyGraphMetrics.layerGap / 2,
-			(ring.length * spacing) / (Math.PI * 2),
-		) * distance
-		ring.forEach((node, index) => {
-			const angle = -Math.PI / 2 + (index / ring.length) * Math.PI * 2
-			place(node, Math.cos(angle) * radius, Math.sin(angle) * radius)
+	for (const [depth, column] of [...columns.entries()].sort(([left], [right]) => left - right)) {
+		column.sort((left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id))
+		column.forEach((node, index) => {
+			positions.set(node.id, {
+				x: depth * (dependencyGraphMetrics.nodeWidth + dependencyGraphMetrics.layerGap),
+				y: index * (dependencyGraphMetrics.nodeHeight + dependencyGraphMetrics.rowGap),
+			})
 		})
 	}
 

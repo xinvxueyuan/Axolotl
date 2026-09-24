@@ -156,7 +156,7 @@ test('returns the complete relationship context for a filtered node', () => {
 	assert.deepEqual(related, new Set([nodeId('a'), nodeId('b'), nodeId('c')]))
 })
 
-test('uses a deterministic high-degree hub and stable relationship rings', () => {
+test('uses deterministic directional columns with stable node ordering', () => {
 	const graph = buildDependencyGraph([
 		item('hub', '1', { requires: [ref('a'), ref('b'), ref('c')] }),
 		item('a', '1'),
@@ -171,13 +171,7 @@ test('uses a deterministic high-degree hub and stable relationship rings', () =>
 	)
 	const hub = first.nodes.find((node) => node.id === nodeId('hub'))!
 	const leaves = first.nodes.filter((node) => node.id !== nodeId('hub'))
-	const center = {
-		x: (Math.min(...first.nodes.map((node) => node.x)) + Math.max(...first.nodes.map((node) => node.x))) / 2,
-		y: (Math.min(...first.nodes.map((node) => node.y)) + Math.max(...first.nodes.map((node) => node.y))) / 2,
-	}
-	assert.ok(Math.hypot(hub.x - center.x, hub.y - center.y) < Math.min(
-		...leaves.map((node) => Math.hypot(node.x - center.x, node.y - center.y)),
-	))
+	assert.ok(leaves.every((node) => node.x > hub.x))
 	assert.equal(new Set(leaves.map((node) => `${node.x}:${node.y}`)).size, leaves.length)
 })
 
