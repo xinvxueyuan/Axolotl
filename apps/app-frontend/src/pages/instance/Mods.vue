@@ -1022,7 +1022,16 @@ function allDependencyGraphItems() {
 		const id = getContentItemId(item)
 		if (id) itemsById.set(id, item)
 	}
-	return [...itemsById.values()]
+	return [...itemsById.values()].map((item) => {
+		if (!item.project?.icon_url) return item
+		return {
+			...item,
+			project: {
+				...item.project,
+				icon_url: displayContentIconUrl(item),
+			},
+		}
+	})
 }
 
 function handleViewDependencies() {
