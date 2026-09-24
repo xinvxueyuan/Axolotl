@@ -766,6 +766,7 @@ defineExpose({ show, hide, setItems })
 		:style="{ height: '80vh', maxHeight: '80vh' }"
 		:scrollable="false"
 		:no-padding="true"
+		:fill-content="true"
 	>
 		<template #title>
 			<Avatar
@@ -784,7 +785,7 @@ defineExpose({ show, hide, setItems })
 			</div>
 		</template>
 
-		<div class="flex min-h-0 flex-1 flex-col">
+		<div class="flex min-h-0 flex-1 flex-col overflow-hidden">
 			<div
 				class="flex flex-wrap items-center gap-3 border-0 border-b border-solid border-surface-4 px-6 py-4"
 			>
@@ -844,7 +845,7 @@ defineExpose({ show, hide, setItems })
 			</div>
 
 			<div class="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-				<div class="min-h-0 min-w-0 flex-1">
+				<div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 					<div
 						v-if="items.length === 0"
 						class="flex h-full items-center justify-center p-8 text-secondary"
@@ -944,7 +945,7 @@ defineExpose({ show, hide, setItems })
 						</div>
 					</div>
 
-					<div v-else class="flex min-h-0 flex-1 flex-col p-4">
+					<div v-else class="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
 						<div
 							class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-solid border-surface-5 bg-surface-1 shadow-sm"
 						>
@@ -1206,17 +1207,8 @@ defineExpose({ show, hide, setItems })
 </template>
 
 <style scoped>
-:deep([data-modal-content]) {
-	display: flex;
-	height: 100%;
-	min-height: 0;
-	flex: 1 1 auto;
-	flex-direction: column;
-}
-
 .dependency-graph-viewport {
 	min-height: 0;
-	height: 100%;
 	background-color: var(--surface-1);
 	background-image:
 		linear-gradient(color-mix(in srgb, var(--surface-4) 76%, transparent) 1px, transparent 1px),
