@@ -143,8 +143,9 @@ export function getCurseForgeImageUrl(source?: string | null, width = 256): stri
 		if (extension === 'gif') {
 			proxy.searchParams.set('output', 'gif')
 			proxy.searchParams.set('n', '-1')
-		} else if (extension === 'webp') {
-			// Some CurseForge animated WebP URLs fail in the embedded browser.
+		} else if (extension === 'webp' || url.pathname.toLowerCase().includes('/avatars/')) {
+			// Some CurseForge animated WebP URLs fail in the embedded browser,
+			// and avatar URLs may not have a reliable extension.
 			// Convert them to a broadly supported static image at the CDN edge.
 			proxy.searchParams.set('output', 'png')
 		} else {

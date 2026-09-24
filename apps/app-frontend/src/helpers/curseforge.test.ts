@@ -91,8 +91,15 @@ test('converts CurseForge WebP images through the image proxy', () => {
 	assert.equal(proxy.searchParams.get('output'), 'png')
 })
 
+test('converts CurseForge avatar URLs without a WebP extension', () => {
+	const result = getCurseForgeImageUrl('https://media.forgecdn.net/avatars/123/456/example', 96)
+	const proxy = new URL(result!)
+
+	assert.equal(proxy.searchParams.get('output'), 'png')
+})
+
 test('continues optimizing static CurseForge images as WebP', () => {
-	const result = getCurseForgeImageUrl('https://media.forgecdn.net/avatars/example.png')
+	const result = getCurseForgeImageUrl('https://media.forgecdn.net/images/example.png')
 	const proxy = new URL(result!)
 
 	assert.equal(proxy.searchParams.get('output'), 'webp')
