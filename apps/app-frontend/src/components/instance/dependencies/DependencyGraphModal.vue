@@ -944,7 +944,7 @@ defineExpose({ show, hide, setItems })
 						</div>
 					</div>
 
-					<div v-else class="flex min-h-0 flex-1 flex-col p-4">
+					<div v-else class="flex h-full min-h-0 flex-col p-4">
 						<div
 							class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-solid border-surface-5 bg-surface-1 shadow-sm"
 						>
