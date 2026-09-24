@@ -128,33 +128,8 @@ export function hasCompatibleCurseForgeFile(files: CurseForgeFile[], gameVersion
 	return files.some((file) => file.isAvailable && file.gameVersions.includes(gameVersion))
 }
 
-export function getCurseForgeImageUrl(source?: string | null, width = 256): string | undefined {
-	if (!source) return undefined
-
-	try {
-		const url = new URL(source)
-		if (url.protocol !== 'https:' || !url.hostname.endsWith('forgecdn.net')) return source
-
-		const proxy = new URL('https://images.weserv.nl/')
-		proxy.searchParams.set('url', source)
-		proxy.searchParams.set('w', String(width))
-		proxy.searchParams.set('fit', 'contain')
-		const extension = url.pathname.toLowerCase().split('.').at(-1)
-		if (extension === 'gif') {
-			proxy.searchParams.set('output', 'gif')
-			proxy.searchParams.set('n', '-1')
-		} else if (extension === 'webp' || url.pathname.toLowerCase().includes('/avatars/')) {
-			// Some CurseForge animated WebP URLs fail in the embedded browser,
-			// and avatar URLs may not have a reliable extension.
-			// Convert them to a broadly supported static image at the CDN edge.
-			proxy.searchParams.set('output', 'png')
-		} else {
-			proxy.searchParams.set('output', 'webp')
-		}
-		return proxy.toString()
-	} catch {
-		return source
-	}
+export function getCurseForgeImageUrl(source?: string | null, _width = 256): string | undefined {
+	return source ?? undefined
 }
 
 export interface CurseForgeFilesResponse {

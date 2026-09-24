@@ -58,55 +58,31 @@ test('requires an available exact CurseForge game version match', () => {
 	assert.equal(hasCompatibleCurseForgeFile(files, '1.20.2'), false)
 })
 
-test('preserves every frame of CurseForge GIF images', () => {
-	const result = getCurseForgeImageUrl(
-		'https://media.forgecdn.net/avatars/123/456/example.GIF?cache=1',
-		96,
-	)
-	const proxy = new URL(result!)
+test('keeps CurseForge GIF images on their original URL', () => {
+	const source = 'https://media.forgecdn.net/avatars/123/456/example.GIF?cache=1'
 
-	assert.equal(proxy.origin, 'https://images.weserv.nl')
-	assert.equal(
-		proxy.searchParams.get('url'),
-		'https://media.forgecdn.net/avatars/123/456/example.GIF?cache=1',
-	)
-	assert.equal(proxy.searchParams.get('w'), '96')
-	assert.equal(proxy.searchParams.get('output'), 'gif')
-	assert.equal(proxy.searchParams.get('n'), '-1')
+	assert.equal(getCurseForgeImageUrl(source, 96), source)
 })
 
-test('converts CurseForge WebP images through the image proxy', () => {
-	const result = getCurseForgeImageUrl(
-		'https://media.forgecdn.net/avatars/123/456/example.webp?cache=1',
-		96,
-	)
+test('keeps CurseForge WebP images on their original URL', () => {
+	const source = 'https://media.forgecdn.net/avatars/1497/387/638972731634654794.webp'
 
-	const proxy = new URL(result!)
-	assert.equal(proxy.origin, 'https://images.weserv.nl')
-	assert.equal(
-		proxy.searchParams.get('url'),
-		'https://media.forgecdn.net/avatars/123/456/example.webp?cache=1',
-	)
-	assert.equal(proxy.searchParams.get('w'), '96')
-	assert.equal(proxy.searchParams.get('output'), 'png')
+	assert.equal(getCurseForgeImageUrl(source, 96), source)
 })
 
-test('converts CurseForge avatar URLs without a WebP extension', () => {
-	const result = getCurseForgeImageUrl('https://media.forgecdn.net/avatars/123/456/example', 96)
-	const proxy = new URL(result!)
+test('keeps CurseForge avatar URLs without a WebP extension on their original URL', () => {
+	const source = 'https://media.forgecdn.net/avatars/123/456/example'
 
-	assert.equal(proxy.searchParams.get('output'), 'png')
+	assert.equal(getCurseForgeImageUrl(source, 96), source)
 })
 
-test('continues optimizing static CurseForge images as WebP', () => {
-	const result = getCurseForgeImageUrl('https://media.forgecdn.net/images/example.png')
-	const proxy = new URL(result!)
+test('keeps static CurseForge images on their original URL', () => {
+	const source = 'https://media.forgecdn.net/images/example.png'
 
-	assert.equal(proxy.searchParams.get('output'), 'webp')
-	assert.equal(proxy.searchParams.has('n'), false)
+	assert.equal(getCurseForgeImageUrl(source), source)
 })
 
-test('does not proxy images outside ForgeCDN', () => {
+test('keeps images outside ForgeCDN on their original URL', () => {
 	const source = 'https://cdn.modrinth.com/data/example/icon.gif'
 
 	assert.equal(getCurseForgeImageUrl(source), source)
