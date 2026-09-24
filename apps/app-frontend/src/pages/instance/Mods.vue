@@ -803,7 +803,13 @@ function displayContentIconUrl(item: Pick<ContentItem, 'project'>): string | und
 	const iconUrl = item.project?.icon_url
 	if (!iconUrl) return undefined
 	if (item.project?.id.startsWith('curseforge:')) {
-		return getCurseForgeImageUrl(iconUrl) ?? iconUrl
+		const resolved = getCurseForgeImageUrl(iconUrl) ?? iconUrl
+		console.debug('[CurseForge image trace] content item', {
+			itemId: item.project.id,
+			source: iconUrl,
+			resolved,
+		})
+		return resolved
 	}
 	return localContentIconUrl(iconUrl)
 }

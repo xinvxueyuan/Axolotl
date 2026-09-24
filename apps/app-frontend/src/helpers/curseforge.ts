@@ -129,7 +129,11 @@ export function hasCompatibleCurseForgeFile(files: CurseForgeFile[], gameVersion
 }
 
 export function getCurseForgeImageUrl(source?: string | null, _width = 256): string | undefined {
-	return source ?? undefined
+	const result = source ?? undefined
+	if (source?.includes('forgecdn.net')) {
+		console.debug('[CurseForge image trace] resolve', { source, result })
+	}
+	return result
 }
 
 export interface CurseForgeFilesResponse {

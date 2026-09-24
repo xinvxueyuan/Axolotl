@@ -168,6 +168,13 @@ function nodeIdForItem(item: ContentItem): string {
 function nodeFromItem(item: ContentItem, id: string): DependencyGraphNode {
 	const dependency = item.dependency ?? emptyDependency()
 	const provider = item.origin_provider ?? item.provider_refs[0]?.provider ?? 'local'
+	if (item.project?.icon_url?.includes('forgecdn.net')) {
+		console.debug('[CurseForge image trace] graph node', {
+			id,
+			title: item.project.title,
+			source: item.project.icon_url,
+		})
+	}
 	return {
 		id,
 		title: item.project?.title ?? item.file_name,
@@ -551,7 +558,9 @@ function layoutComponent(
 	const maxRowsPerColumn = 8
 	let columnX = 0
 	for (const [, column] of [...columns.entries()].sort(([left], [right]) => left - right)) {
-		column.sort((left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id))
+		column.sort(
+			(left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id),
+		)
 		const columnCount = Math.max(1, Math.ceil(column.length / maxRowsPerColumn))
 		column.forEach((node, index) => {
 			positions.set(node.id, {
@@ -559,7 +568,9 @@ function layoutComponent(
 					columnX +
 					Math.floor(index / maxRowsPerColumn) *
 						(dependencyGraphMetrics.nodeWidth + dependencyGraphMetrics.rowGap),
-				y: (index % maxRowsPerColumn) * (dependencyGraphMetrics.nodeHeight + dependencyGraphMetrics.rowGap),
+				y:
+					(index % maxRowsPerColumn) *
+					(dependencyGraphMetrics.nodeHeight + dependencyGraphMetrics.rowGap),
 			})
 		})
 		columnX +=

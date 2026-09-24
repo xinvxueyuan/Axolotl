@@ -93,6 +93,7 @@ const LEGACY_PRESETS: Record<string, string> = {
 }
 
 const cssSize = computed(() => LEGACY_PRESETS[props.size] ?? props.size)
+const traceForgeCdnImage = computed(() => props.src?.includes('forgecdn.net') ?? false)
 
 watch(
 	() => props.src,
@@ -102,12 +103,28 @@ watch(
 	},
 )
 
-function onError(e) {
-	console.log('Avatar image failed to load:', props.src, e)
+function onError(e: Event) {
+	if (traceForgeCdnImage.value) {
+		console.error('[CurseForge image trace] avatar error', {
+			src: props.src,
+			currentSrc: img.value?.currentSrc,
+			naturalWidth: img.value?.naturalWidth,
+			naturalHeight: img.value?.naturalHeight,
+			error: e,
+		})
+	}
 	failed.value = true
 }
 
 function updatePixelated() {
+	if (traceForgeCdnImage.value) {
+		console.debug('[CurseForge image trace] avatar load', {
+			src: props.src,
+			currentSrc: img.value?.currentSrc,
+			naturalWidth: img.value?.naturalWidth,
+			naturalHeight: img.value?.naturalHeight,
+		})
+	}
 	autoUnframed.value = Boolean(
 		img.value &&
 		props.unframedNaturalWidth !== undefined &&
