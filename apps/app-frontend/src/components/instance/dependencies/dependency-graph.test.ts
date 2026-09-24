@@ -7,6 +7,7 @@ import {
 	buildDependencyGraph,
 	dependencyGraphMetrics,
 	getConnectedComponents,
+	getDependencyNodeDepths,
 	getDependencyTreeRows,
 	getRelatedNodeIds,
 	layoutDependencyGraph,
@@ -242,4 +243,29 @@ test('uses dragged final coordinates for connectors and canvas bounds', () => {
 		layout.height >=
 			target.y + dependencyGraphMetrics.nodeHeight + dependencyGraphMetrics.canvasPadding,
 	)
+})
+
+test('keeps directional depths and lays out a 500-node graph within the performance target', () => {
+	const items = Array.from({ length: 500 }, (_, index) => {
+		const requires = [1, 2, 3]
+			.map((offset) => index - offset)
+			.filter((dependencyIndex) => dependencyIndex >= 0)
+			.map((dependencyIndex) => ref(`mod-${dependencyIndex}`))
+		return item(`mod-${index}`, '1', { requires })
+	})
+	const graph = buildDependencyGraph(items)
+	const visibleIds = new Set(graph.edges.flatMap((edge) => [edge.source, edge.target]))
+	const started = performance.now()
+	const depths = getDependencyNodeDepths(graph, visibleIds)
+	const layout = layoutDependencyGraph(graph, visibleIds)
+	const elapsed = performance.now() - started
+
+	assert.equal(graph.nodes.length, 500)
+	assert.equal(graph.edges.length, 1494)
+	assert.equal(depths.get(nodeId('mod-499')), 0)
+	assert.equal(depths.get(nodeId('mod-0')), 499)
+	assert.equal(layout.nodes.length, 500)
+	assert.equal(layout.edges.length, 1494)
+	assert.ok(elapsed < 1000, `static graph preparation took ${elapsed.toFixed(1)}ms`)
+	assert.ok(layout.edges.every((edge) => edge.source && edge.target))
 })

@@ -28,11 +28,12 @@ import { RouterLink } from 'vue-router'
 
 import {
 	buildDependencyGraph,
+	dependencyGraphMetrics,
 	type DependencyDirection,
 	type DependencyGraph,
-	type DependencyGraphEdge,
 	type DependencyGraphNode,
 	getDependencyTreeRows,
+	getDependencyNodeDepths,
 	getRelatedNodeIds,
 	layoutDependencyGraph,
 } from './dependency-graph'
@@ -162,7 +163,10 @@ const draggedNodeId = ref<string>()
 const nodeOffsets = ref(new Map<string, Point>())
 const graphViewport = ref<HTMLElement | null>(null)
 const graphCanvas = ref<HTMLElement | null>(null)
+const graphEdgesCanvas = ref<HTMLCanvasElement | null>(null)
 const dragState = ref<{ kind: 'pan' | 'node'; id?: string }>()
+const dynamicPositions = ref(new Map<string, Point>())
+const pinnedNodeIds = ref(new Set<string>())
 let activePan: Point | undefined
 let lastPointerPosition: Point | undefined
 let pendingPointerMove: { dx: number; dy: number } | undefined
@@ -170,6 +174,9 @@ let pointerFrame: number | undefined
 let constrainFrame: number | undefined
 let viewportObserver: ResizeObserver | undefined
 let fitFrame: number | undefined
+let edgeFrame: number | undefined
+let forceWorker: Worker | undefined
+let stableLayoutFrames = 0
 
 const graph = computed<DependencyGraph>(() => buildDependencyGraph(items.value))
 const typeOptions = computed(() => [
@@ -278,6 +285,38 @@ const graphLayout = computed(() =>
 	layoutDependencyGraph(graph.value, graphNodeIds.value, nodeOffsets.value),
 )
 
+const dynamicGraphNodes = computed(() =>
+	graphLayout.value.nodes.map((node) => ({
+		...node,
+		...(dynamicPositions.value.get(node.id) ?? { x: node.x, y: node.y }),
+	})),
+)
+
+const visibleGraphNodes = computed(() => {
+	const viewport = graphViewport.value
+	if (!viewport || zoom.value < 0.58) return dynamicGraphNodes.value
+	const overscan = 180 / zoom.value
+	const left = (-pan.value.x - overscan) / zoom.value
+	const top = (-pan.value.y - overscan) / zoom.value
+	const right = (viewport.clientWidth - pan.value.x + overscan) / zoom.value
+	const bottom = (viewport.clientHeight - pan.value.y + overscan) / zoom.value
+	const related = selectedNodeId.value
+		? new Set(
+				graph.value.edges
+					.filter((edge) => edge.source === related || edge.target === related)
+					.flatMap((edge) => [edge.source, edge.target]),
+			)
+		: new Set<string>()
+	return dynamicGraphNodes.value.filter(
+		(node) =>
+			related.has(node.id) ||
+			(node.x + dependencyGraphMetrics.nodeWidth >= left &&
+				node.x <= right &&
+				node.y + dependencyGraphMetrics.nodeHeight >= top &&
+				node.y <= bottom),
+	)
+})
+
 const isolatedNodes = computed(() => {
 	const candidates = hasActiveGraphFilter.value
 		? matchedNodeIds.value
@@ -339,6 +378,147 @@ function clamp(value: number, lower: number, upper: number): number {
 function applyCanvasTransform(nextPan = pan.value) {
 	if (!graphCanvas.value) return
 	graphCanvas.value.style.transform = `translate3d(${nextPan.x}px, ${nextPan.y}px, 0) scale(${zoom.value})`
+}
+
+function scheduleEdgeDraw() {
+	if (edgeFrame) return
+	edgeFrame = requestAnimationFrame(() => {
+		edgeFrame = undefined
+		drawGraphEdges()
+	})
+}
+
+function drawGraphEdges() {
+	const canvas = graphEdgesCanvas.value
+	if (!canvas) return
+	const width = graphLayout.value.width
+	const height = graphLayout.value.height
+	const deviceScale = window.devicePixelRatio || 1
+	if (
+		canvas.width !== Math.ceil(width * deviceScale) ||
+		canvas.height !== Math.ceil(height * deviceScale)
+	) {
+		canvas.width = Math.ceil(width * deviceScale)
+		canvas.height = Math.ceil(height * deviceScale)
+		canvas.style.width = `${width}px`
+		canvas.style.height = `${height}px`
+	}
+	const context = canvas.getContext('2d')
+	if (!context) return
+	context.setTransform(deviceScale, 0, 0, deviceScale, 0, 0)
+	context.clearRect(0, 0, width, height)
+	const styles = getComputedStyle(canvas)
+	const activeColor = styles.getPropertyValue('--color-brand').trim() || '#8bd450'
+	const mutedColor = styles.getPropertyValue('--surface-5').trim() || '#697384'
+	const orangeColor = styles.getPropertyValue('--color-orange').trim() || '#f2a65a'
+	const positions = new Map(dynamicGraphNodes.value.map((node) => [node.id, node]))
+	for (const edge of graphLayout.value.edges) {
+		const source = positions.get(edge.source)
+		const target = positions.get(edge.target)
+		if (!source || !target) continue
+		const active =
+			!selectedNodeId.value ||
+			edge.source === selectedNodeId.value ||
+			edge.target === selectedNodeId.value
+		const color = !edge.resolved ? orangeColor : active ? activeColor : mutedColor
+		context.globalAlpha = active ? 0.9 : 0.18
+		context.strokeStyle = color
+		context.fillStyle = color
+		context.lineWidth = active ? 2 : 1
+		const startX = source.x + dependencyGraphMetrics.nodeWidth
+		const startY = source.y + dependencyGraphMetrics.nodeHeight / 2
+		const endX = target.x
+		const endY = target.y + dependencyGraphMetrics.nodeHeight / 2
+		const curve = Math.max(48, Math.abs(endX - startX) * 0.36)
+		context.beginPath()
+		context.moveTo(startX, startY)
+		context.bezierCurveTo(startX + curve, startY, endX - curve, endY, endX, endY)
+		context.stroke()
+		const angle = Math.atan2(endY - startY, endX - startX)
+		context.save()
+		context.translate(endX, endY)
+		context.rotate(angle)
+		context.beginPath()
+		context.moveTo(0, 0)
+		context.lineTo(-10, -5)
+		context.lineTo(-10, 5)
+		context.closePath()
+		context.fill()
+		context.restore()
+	}
+	context.globalAlpha = 1
+}
+
+function stopForceLayout() {
+	forceWorker?.postMessage({ type: 'stop' })
+	forceWorker?.terminate()
+	forceWorker = undefined
+	stableLayoutFrames = 0
+}
+
+function startForceLayout() {
+	stopForceLayout()
+	if (viewMode.value !== 'graph' || graphLayout.value.nodes.length === 0) return
+	if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+		scheduleEdgeDraw()
+		return
+	}
+	try {
+		forceWorker = new Worker(new URL('./dependency-graph.worker.ts', import.meta.url), {
+			type: 'module',
+		})
+	} catch {
+		return
+	}
+	const depths = getDependencyNodeDepths(graph.value, graphNodeIds.value)
+	let lastUpdate = 0
+	let previous = new Map<string, Point>()
+	forceWorker.onmessage = (
+		event: MessageEvent<{
+			type: 'positions'
+			positions: Array<{ id: string; x: number; y: number }>
+		}>,
+	) => {
+		if (event.data.type !== 'positions') return
+		const now = performance.now()
+		const next = new Map(
+			event.data.positions.map((position) => [position.id, { x: position.x, y: position.y }]),
+		)
+		const maxDelta = Math.max(
+			0,
+			...event.data.positions.map((position) => {
+				const before = previous.get(position.id)
+				return before ? Math.hypot(position.x - before.x, position.y - before.y) : 100
+			}),
+		)
+		previous = next
+		if (maxDelta < 0.45) stableLayoutFrames += 1
+		else stableLayoutFrames = 0
+		if (now - lastUpdate >= 50 || stableLayoutFrames >= 8) {
+			lastUpdate = now
+			dynamicPositions.value = next
+			scheduleEdgeDraw()
+		}
+		if (stableLayoutFrames >= 8) stopForceLayout()
+	}
+	forceWorker.postMessage({
+		type: 'start',
+		nodes: graphLayout.value.nodes.map((node) => {
+			const position = dynamicPositions.value.get(node.id) ?? { x: node.x, y: node.y }
+			return {
+				id: node.id,
+				x: position.x,
+				y: position.y,
+				vx: 0,
+				vy: 0,
+				depth: depths.get(node.id) ?? 0,
+				pinned: pinnedNodeIds.value.has(node.id),
+			}
+		}),
+		edges: graphLayout.value.edges.map(({ source, target }) => ({ source, target })),
+		width: graphLayout.value.width,
+		height: graphLayout.value.height,
+	})
 }
 
 function constrainedPan(nextPan: Point, nextZoom = zoom.value): Point {
@@ -411,8 +591,14 @@ function scheduleGraphFit() {
 }
 
 function resetGraphView() {
+	stopForceLayout()
 	nodeOffsets.value = new Map()
-	nextTick(scheduleGraphFit)
+	dynamicPositions.value = new Map()
+	pinnedNodeIds.value = new Set()
+	nextTick(() => {
+		scheduleGraphFit()
+		startForceLayout()
+	})
 }
 
 function zoomTo(nextZoom: number, anchor?: Point) {
@@ -479,13 +665,21 @@ function applyPointerMove() {
 		return
 	}
 	if (!state.id) return
-	const offset = nodeOffsets.value.get(state.id) ?? { x: 0, y: 0 }
-	const nextOffsets = new Map(nodeOffsets.value)
-	nextOffsets.set(state.id, {
-		x: offset.x + movement.dx / zoom.value,
-		y: offset.y + movement.dy / zoom.value,
-	})
-	nodeOffsets.value = nextOffsets
+	const node = dynamicGraphNodes.value.find((candidate) => candidate.id === state.id)
+	if (!node) return
+	const nextPositions = new Map(dynamicPositions.value)
+	const position = nextPositions.get(state.id) ?? { x: node.x, y: node.y }
+	const nextPosition = {
+		x: position.x + movement.dx / zoom.value,
+		y: position.y + movement.dy / zoom.value,
+	}
+	nextPositions.set(state.id, nextPosition)
+	dynamicPositions.value = nextPositions
+	const nextPinned = new Set(pinnedNodeIds.value)
+	nextPinned.add(state.id)
+	pinnedNodeIds.value = nextPinned
+	forceWorker?.postMessage({ type: 'pin', id: state.id, ...nextPosition })
+	scheduleEdgeDraw()
 }
 
 function movePointer(event: PointerEvent) {
@@ -550,14 +744,6 @@ function nodeStatusClass(node: DependencyGraphNode) {
 	return 'border-surface-4 bg-surface-2 shadow-black/20'
 }
 
-function edgeIsMuted(edge: DependencyGraphEdge) {
-	return (
-		!!selectedNodeId.value &&
-		edge.source !== selectedNodeId.value &&
-		edge.target !== selectedNodeId.value
-	)
-}
-
 function show(contentItems: ContentItem[]) {
 	items.value = [...contentItems]
 	selectedNodeId.value = undefined
@@ -570,6 +756,8 @@ function show(contentItems: ContentItem[]) {
 	viewMode.value = 'tree'
 	direction.value = 'requiredBy'
 	nodeOffsets.value = new Map()
+	dynamicPositions.value = new Map()
+	pinnedNodeIds.value = new Set()
 	expandedIds.value = new Set(
 		treeRootIdsForDirection(buildDependencyGraph(contentItems), 'requiredBy'),
 	)
@@ -584,7 +772,12 @@ function setItems(contentItems: ContentItem[]) {
 	selectedNodeId.value = ids.has(selectedNodeId.value ?? '') ? selectedNodeId.value : undefined
 	expandedIds.value = new Set([...expandedIds.value].filter((id) => ids.has(id)))
 	nodeOffsets.value = new Map([...nodeOffsets.value].filter(([id]) => ids.has(id)))
-	nextTick(scheduleGraphFit)
+	dynamicPositions.value = new Map([...dynamicPositions.value].filter(([id]) => ids.has(id)))
+	pinnedNodeIds.value = new Set([...pinnedNodeIds.value].filter((id) => ids.has(id)))
+	nextTick(() => {
+		scheduleGraphFit()
+		startForceLayout()
+	})
 }
 
 function hide() {
@@ -596,19 +789,35 @@ watch(direction, () => {
 })
 
 watch(viewMode, (mode) => {
-	if (mode === 'graph') nextTick(scheduleGraphFit)
+	if (mode === 'graph') {
+		nextTick(() => {
+			scheduleGraphFit()
+			startForceLayout()
+		})
+	} else {
+		stopForceLayout()
+	}
 })
 
 watch(graphStructureKey, () => {
-	nextTick(scheduleGraphFit)
+	nextTick(() => {
+		scheduleGraphFit()
+		startForceLayout()
+	})
 })
+
+watch(dynamicPositions, scheduleEdgeDraw)
+watch(selectedNodeId, scheduleEdgeDraw)
 
 watch(graphViewport, (viewport) => {
 	viewportObserver?.disconnect()
 	if (!viewport || typeof ResizeObserver === 'undefined') return
 	viewportObserver = new ResizeObserver(schedulePanConstraint)
 	viewportObserver.observe(viewport)
-	nextTick(scheduleGraphFit)
+	nextTick(() => {
+		scheduleGraphFit()
+		scheduleEdgeDraw()
+	})
 })
 
 onBeforeUnmount(() => {
@@ -616,6 +825,8 @@ onBeforeUnmount(() => {
 	if (fitFrame) cancelAnimationFrame(fitFrame)
 	if (pointerFrame) cancelAnimationFrame(pointerFrame)
 	if (constrainFrame) cancelAnimationFrame(constrainFrame)
+	if (edgeFrame) cancelAnimationFrame(edgeFrame)
+	stopForceLayout()
 })
 
 defineExpose({ show, hide, setItems })
@@ -896,6 +1107,12 @@ defineExpose({ show, hide, setItems })
 										transformOrigin: 'top left',
 									}"
 								>
+									<canvas
+										ref="graphEdgesCanvas"
+										class="dependency-graph-edges pointer-events-none absolute left-0 top-0"
+										:width="graphLayout.width"
+										:height="graphLayout.height"
+									/>
 									<div
 										v-for="component in graphLayout.components"
 										:key="component.id"
@@ -908,32 +1125,14 @@ defineExpose({ show, hide, setItems })
 										}"
 									/>
 									<div
-										v-for="edge in graphLayout.edges"
-										:key="edge.id"
-										class="dependency-graph-connector"
-										:class="{
-											'dependency-graph-connector-muted': edgeIsMuted(edge),
-											'dependency-graph-connector-unresolved': !edge.resolved,
-										}"
-										:style="{
-											'--connector-length': `${edge.connector.length}px`,
-											left: `${edge.connector.x}px`,
-											top: `${edge.connector.y}px`,
-											transform: `rotate(${edge.connector.rotation}deg)`,
-										}"
-									>
-										<span class="dependency-graph-connector-line" />
-										<span class="dependency-graph-connector-arrow" />
-									</div>
-
-									<div
-										v-for="node in graphLayout.nodes"
+										v-for="node in visibleGraphNodes"
 										:key="node.id"
 										data-dependency-node
 										class="dependency-graph-node absolute flex h-[76px] w-[228px] cursor-grab items-center gap-3 rounded-2xl border-2 px-3 shadow-lg transition-[box-shadow,opacity,transform] active:cursor-grabbing"
 										:class="[
 											nodeStatusClass(node),
 											selectedNodeId && selectedNodeId !== node.id ? 'opacity-35' : '',
+											zoom < 0.58 ? 'dependency-graph-node-compact' : '',
 											draggedNodeId === node.id ? 'z-10 scale-[1.03] shadow-xl' : '',
 										]"
 										:style="{ left: `${node.x}px`, top: `${node.y}px` }"
@@ -1096,6 +1295,11 @@ defineExpose({ show, hide, setItems })
 	will-change: transform;
 }
 
+.dependency-graph-edges {
+	z-index: 1;
+	will-change: contents;
+}
+
 .dependency-graph-component {
 	position: absolute;
 	z-index: 0;
@@ -1104,61 +1308,22 @@ defineExpose({ show, hide, setItems })
 	background: color-mix(in srgb, var(--surface-2) 70%, transparent);
 }
 
-.dependency-graph-connector {
-	position: absolute;
-	z-index: 1;
-	display: block;
-	width: var(--connector-length);
-	height: 0;
-	transform-origin: 0 50%;
-}
-
-.dependency-graph-connector-line {
-	position: absolute;
-	inset: -5px 0 auto;
-	display: block;
-	height: 10px;
-	border-radius: 999px;
-	background: var(--surface-5);
-}
-
-.dependency-graph-connector-line::after {
-	position: absolute;
-	top: 3px;
-	right: 0;
-	left: 0;
-	display: block;
-	height: 4px;
-	border-radius: inherit;
-	background: var(--color-brand);
-	content: '';
-}
-
-.dependency-graph-connector-arrow {
-	position: absolute;
-	top: -8px;
-	right: -1px;
-	width: 0;
-	height: 0;
-	border-top: 8px solid transparent;
-	border-bottom: 8px solid transparent;
-	border-left: 12px solid var(--color-brand);
-}
-
-.dependency-graph-connector-unresolved .dependency-graph-connector-line::after {
-	background: var(--color-orange);
-}
-
-.dependency-graph-connector-unresolved .dependency-graph-connector-arrow {
-	border-left-color: var(--color-orange);
-}
-
-.dependency-graph-connector-muted {
-	opacity: 0.28;
-}
-
 .dependency-graph-node {
 	z-index: 2;
+}
+
+.dependency-graph-node-compact {
+	gap: 0;
+	justify-content: center;
+	width: 48px;
+	height: 48px;
+	padding: 4px;
+	border-radius: 999px;
+}
+
+.dependency-graph-node-compact > div,
+.dependency-graph-node-compact .dependency-graph-port {
+	display: none;
 }
 
 .dependency-graph-port {

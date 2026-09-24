@@ -481,6 +481,37 @@ function nodeDepths(graph: DependencyGraph, visibleIds: ReadonlySet<string>): Ma
 	return depths
 }
 
+export function getDependencyNodeDepths(
+	graph: DependencyGraph,
+	visibleIds: ReadonlySet<string>,
+): Map<string, number> {
+	const depths = new Map<string, number>()
+	const queue = graph.nodes
+		.filter(
+			(node) =>
+				visibleIds.has(node.id) &&
+				!(graph.edgesByTarget.get(node.id) ?? []).some((edge) => visibleIds.has(edge.source)),
+		)
+		.map((node) => node.id)
+	for (const id of queue) depths.set(id, 0)
+	while (queue.length) {
+		const id = queue.shift()!
+		const depth = depths.get(id) ?? 0
+		for (const edge of graph.edgesBySource.get(id) ?? []) {
+			if (!visibleIds.has(edge.target)) continue
+			const nextDepth = Math.max(depths.get(edge.target) ?? 0, depth + 1)
+			if (nextDepth !== depths.get(edge.target)) {
+				depths.set(edge.target, nextDepth)
+				queue.push(edge.target)
+			}
+		}
+	}
+	for (const id of visibleIds) {
+		if (!depths.has(id)) depths.set(id, 0)
+	}
+	return depths
+}
+
 function edgeGeometry(
 	source: NodePosition,
 	target: NodePosition,
