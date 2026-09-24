@@ -82,9 +82,14 @@ function layout(layered=false){
   const hub=nodes.slice().sort((a,b)=>(adjacency.get(b.id).size-adjacency.get(a.id).size)||a.title.localeCompare(b.title))[0];
   const distance=new Map([[hub.id,0]]), queue=[hub.id];
   for(let i=0;i<queue.length;i++){for(const next of adjacency.get(queue[i])){if(distance.has(next))continue;distance.set(next,distance.get(queue[i])+1);queue.push(next)}}
-  const rings=new Map(); for(const n of nodes){const d=distance.get(n.id)||1;if(!rings.has(d))rings.set(d,[]);rings.get(d).push(n)}
-  const place=(n,x,y)=>{n.x=x-W/2;n.y=y-H/2;n.pinned=false}; place(hub,0,0);
-  for(const [d,ring] of [...rings.entries()].sort((a,b)=>a[0]-b[0])){if(!d)continue;ring.sort((a,b)=>a.title.localeCompare(b.title));const radius=Math.max(W+90,ring.length*(W+40)/(Math.PI*2))*d;ring.forEach((n,i)=>{const angle=-Math.PI/2+i/ring.length*Math.PI*2;place(n,Math.cos(angle)*radius,Math.sin(angle)*radius)})}
+  const columns=new Map(); for(const n of nodes){const d=distance.get(n.id)||0;if(!columns.has(d))columns.set(d,[]);columns.get(d).push(n)}
+  let columnX=0; const maxRows=5;
+  for(const column of [...columns.entries()].sort((a,b)=>a[0]-b[0]).map(x=>x[1])){
+    column.sort((a,b)=>a.title.localeCompare(b.title));
+    const count=Math.max(1,Math.ceil(column.length/maxRows));
+    column.forEach((n,i)=>{n.x=columnX+Math.floor(i/maxRows)*(W+18);n.y=(i%maxRows)*82;n.pinned=false});
+    columnX+=count*(W+18)+70;
+  }
   if(layered){nodes.forEach((n,i)=>{n.x=100+(i%4)*240;n.y=80+Math.floor(i/4)*105;n.pinned=false})}
   renderNodes();draw();
 }
