@@ -548,14 +548,23 @@ function layoutComponent(
 		columns.set(depths.get(node.id) ?? 0, column)
 	}
 	const positions = new Map<string, NodePosition>()
-	for (const [depth, column] of [...columns.entries()].sort(([left], [right]) => left - right)) {
+	const maxRowsPerColumn = 8
+	let columnX = 0
+	for (const [, column] of [...columns.entries()].sort(([left], [right]) => left - right)) {
 		column.sort((left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id))
+		const columnCount = Math.max(1, Math.ceil(column.length / maxRowsPerColumn))
 		column.forEach((node, index) => {
 			positions.set(node.id, {
-				x: depth * (dependencyGraphMetrics.nodeWidth + dependencyGraphMetrics.layerGap),
-				y: index * (dependencyGraphMetrics.nodeHeight + dependencyGraphMetrics.rowGap),
+				x:
+					columnX +
+					Math.floor(index / maxRowsPerColumn) *
+						(dependencyGraphMetrics.nodeWidth + dependencyGraphMetrics.rowGap),
+				y: (index % maxRowsPerColumn) * (dependencyGraphMetrics.nodeHeight + dependencyGraphMetrics.rowGap),
 			})
 		})
+		columnX +=
+			columnCount * (dependencyGraphMetrics.nodeWidth + dependencyGraphMetrics.rowGap) +
+			dependencyGraphMetrics.layerGap
 	}
 
 	const rawPositions = [...positions.values()]
