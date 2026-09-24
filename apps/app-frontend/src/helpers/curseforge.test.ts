@@ -75,6 +75,22 @@ test('preserves every frame of CurseForge GIF images', () => {
 	assert.equal(proxy.searchParams.get('n'), '-1')
 })
 
+test('converts CurseForge WebP images through the image proxy', () => {
+	const result = getCurseForgeImageUrl(
+		'https://media.forgecdn.net/avatars/123/456/example.webp?cache=1',
+		96,
+	)
+
+	const proxy = new URL(result!)
+	assert.equal(proxy.origin, 'https://images.weserv.nl')
+	assert.equal(
+		proxy.searchParams.get('url'),
+		'https://media.forgecdn.net/avatars/123/456/example.webp?cache=1',
+	)
+	assert.equal(proxy.searchParams.get('w'), '96')
+	assert.equal(proxy.searchParams.get('output'), 'png')
+})
+
 test('continues optimizing static CurseForge images as WebP', () => {
 	const result = getCurseForgeImageUrl('https://media.forgecdn.net/avatars/example.png')
 	const proxy = new URL(result!)

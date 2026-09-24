@@ -139,9 +139,14 @@ export function getCurseForgeImageUrl(source?: string | null, width = 256): stri
 		proxy.searchParams.set('url', source)
 		proxy.searchParams.set('w', String(width))
 		proxy.searchParams.set('fit', 'contain')
-		if (url.pathname.toLowerCase().endsWith('.gif')) {
+		const extension = url.pathname.toLowerCase().split('.').at(-1)
+		if (extension === 'gif') {
 			proxy.searchParams.set('output', 'gif')
 			proxy.searchParams.set('n', '-1')
+		} else if (extension === 'webp') {
+			// Some CurseForge animated WebP URLs fail in the embedded browser.
+			// Convert them to a broadly supported static image at the CDN edge.
+			proxy.searchParams.set('output', 'png')
 		} else {
 			proxy.searchParams.set('output', 'webp')
 		}
