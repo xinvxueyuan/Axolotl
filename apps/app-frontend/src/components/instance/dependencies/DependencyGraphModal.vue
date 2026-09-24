@@ -1027,7 +1027,7 @@ defineExpose({ show, hide, setItems })
 
 								<div
 									ref="graphCanvas"
-									class="dependency-graph-canvas relative"
+									class="dependency-graph-canvas absolute left-0 top-0"
 									:style="{
 										width: `${graphLayout.width}px`,
 										height: `${graphLayout.height}px`,
