@@ -166,6 +166,7 @@ const graphEdgesCanvas = ref<HTMLCanvasElement | null>(null)
 const dragState = ref<{ kind: 'pan' | 'node'; id?: string }>()
 let activePan: Point | undefined
 let lastPointerPosition: Point | undefined
+let activePointerId: number | undefined
 let pendingPointerMove: { dx: number; dy: number } | undefined
 let pointerFrame: number | undefined
 let constrainFrame: number | undefined
@@ -439,50 +440,59 @@ function drawGraphEdges() {
 
 function constrainedPan(nextPan: Point, nextZoom = zoom.value): Point {
 	const viewport = graphViewport.value
-	if (!viewport) return nextPan
-	const scaledWidth = graphLayout.value.width * nextZoom
-	const scaledHeight = graphLayout.value.height * nextZoom
-	const centerX = (viewport.clientWidth - scaledWidth) / 2
-	const centerY = (viewport.clientHeight - scaledHeight) / 2
+	const bounds = graphContentBounds()
+	if (!viewport || !bounds) return nextPan
+	const scaledWidth = bounds.width * nextZoom
+	const scaledHeight = bounds.height * nextZoom
+	const centerX = (viewport.clientWidth - scaledWidth) / 2 - bounds.minX * nextZoom
+	const centerY = (viewport.clientHeight - scaledHeight) / 2 - bounds.minY * nextZoom
 	return {
 		x: clamp(
 			nextPan.x,
 			scaledWidth <= viewport.clientWidth
 				? centerX
-				: viewport.clientWidth - scaledWidth - viewportPadding,
-			scaledWidth <= viewport.clientWidth ? centerX : viewportPadding,
+				: viewport.clientWidth - (bounds.minX + bounds.width) * nextZoom - viewportPadding,
+			scaledWidth <= viewport.clientWidth ? centerX : viewportPadding - bounds.minX * nextZoom,
 		),
 		y: clamp(
 			nextPan.y,
 			scaledHeight <= viewport.clientHeight
 				? centerY
-				: viewport.clientHeight - scaledHeight - viewportPadding,
-			scaledHeight <= viewport.clientHeight ? centerY : viewportPadding,
+				: viewport.clientHeight - (bounds.minY + bounds.height) * nextZoom - viewportPadding,
+			scaledHeight <= viewport.clientHeight ? centerY : viewportPadding - bounds.minY * nextZoom,
 		),
 	}
 }
 
+function graphContentBounds() {
+	const nodes = graphLayout.value.nodes
+	if (!nodes.length) return undefined
+	const minX = Math.min(...nodes.map((node) => node.x))
+	const minY = Math.min(...nodes.map((node) => node.y))
+	const maxX = Math.max(...nodes.map((node) => node.x + dependencyGraphMetrics.nodeWidth))
+	const maxY = Math.max(...nodes.map((node) => node.y + dependencyGraphMetrics.nodeHeight))
+	return { minX, minY, width: maxX - minX, height: maxY - minY }
+}
+
 function fitGraph() {
 	const viewport = graphViewport.value
-	if (!viewport || !graphLayout.value.nodes.length) return
+	const bounds = graphContentBounds()
+	if (!viewport || !bounds) return
 	const availableWidth = Math.max(1, viewport.clientWidth - viewportPadding * 2)
 	const availableHeight = Math.max(1, viewport.clientHeight - viewportPadding * 2)
 	zoom.value = clamp(
 		Math.min(
 			1,
-			availableWidth / graphLayout.value.width,
-			availableHeight / graphLayout.value.height,
+			availableWidth / bounds.width,
+			availableHeight / bounds.height,
 		),
 		minZoom,
 		maxZoom,
 	)
-	pan.value = constrainedPan(
-		{
-			x: (viewport.clientWidth - graphLayout.value.width * zoom.value) / 2,
-			y: (viewport.clientHeight - graphLayout.value.height * zoom.value) / 2,
-		},
-		zoom.value,
-	)
+	pan.value = {
+		x: (viewport.clientWidth - bounds.width * zoom.value) / 2 - bounds.minX * zoom.value,
+		y: (viewport.clientHeight - bounds.height * zoom.value) / 2 - bounds.minY * zoom.value,
+	}
 	applyCanvasTransform()
 }
 
@@ -523,6 +533,16 @@ function zoomTo(nextZoom: number, anchor?: Point) {
 		y: (focalPoint.y - pan.value.y) / zoom.value,
 	}
 	zoom.value = clampedZoom
+	if (clampedZoom === minZoom) {
+		const bounds = graphContentBounds()
+		if (!bounds) return
+		pan.value = {
+			x: (viewport.clientWidth - bounds.width * clampedZoom) / 2 - bounds.minX * clampedZoom,
+			y: (viewport.clientHeight - bounds.height * clampedZoom) / 2 - bounds.minY * clampedZoom,
+		}
+		applyCanvasTransform()
+		return
+	}
 	pan.value = constrainedPan(
 		{
 			x: focalPoint.x - graphPoint.x * clampedZoom,
@@ -545,21 +565,26 @@ function handleWheel(event: WheelEvent) {
 }
 
 function startPan(event: PointerEvent) {
+	if (event.button !== 0) return
 	if ((event.target as Element)?.closest('[data-dependency-node], [data-dependency-control]'))
 		return
+	event.preventDefault()
 	selectedNodeId.value = undefined
 	dragState.value = { kind: 'pan' }
+	activePointerId = event.pointerId
 	lastPointerPosition = { x: event.clientX, y: event.clientY }
-	;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+	graphViewport.value?.setPointerCapture(event.pointerId)
 }
 
 function startNodeDrag(event: PointerEvent, nodeId: string) {
+	if (event.button !== 0) return
 	event.stopPropagation()
 	selectNode(nodeId)
 	draggedNodeId.value = nodeId
 	dragState.value = { kind: 'node', id: nodeId }
+	activePointerId = event.pointerId
 	lastPointerPosition = { x: event.clientX, y: event.clientY }
-	;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+	graphViewport.value?.setPointerCapture(event.pointerId)
 }
 
 function applyPointerMove() {
@@ -612,6 +637,10 @@ function endPointer() {
 	lastPointerPosition = undefined
 	dragState.value = undefined
 	draggedNodeId.value = undefined
+	if (activePointerId !== undefined && graphViewport.value?.hasPointerCapture(activePointerId)) {
+		graphViewport.value.releasePointerCapture(activePointerId)
+	}
+	activePointerId = undefined
 }
 
 function nodeLink(node: DependencyGraphNode) {
@@ -732,8 +761,10 @@ defineExpose({ show, hide, setItems })
 <template>
 	<NewModal
 		ref="modal"
-		:max-width="'min(1180px, calc(100vw - 2rem))'"
-		:width="'min(1180px, calc(100vw - 2rem))'"
+		:max-width="'80vw'"
+		:width="'80vw'"
+		:style="{ height: '80vh', maxHeight: '80vh' }"
+		:scrollable="true"
 		:no-padding="true"
 	>
 		<template #title>
@@ -753,7 +784,7 @@ defineExpose({ show, hide, setItems })
 			</div>
 		</template>
 
-		<div class="flex h-[min(640px,calc(100vh-8rem))] min-h-0 flex-col">
+		<div class="flex min-h-0 flex-1 flex-col">
 			<div
 				class="flex flex-wrap items-center gap-3 border-0 border-b border-solid border-surface-4 px-6 py-4"
 			>
@@ -913,7 +944,7 @@ defineExpose({ show, hide, setItems })
 						</div>
 					</div>
 
-					<div v-else class="flex h-full min-h-0 flex-col p-4">
+					<div v-else class="flex min-h-0 flex-1 flex-col p-4">
 						<div
 							class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-solid border-surface-5 bg-surface-1 shadow-sm"
 						>
@@ -953,10 +984,10 @@ defineExpose({ show, hide, setItems })
 								ref="graphViewport"
 								class="dependency-graph-viewport relative min-h-0 flex-1 overflow-hidden touch-none"
 								@wheel="handleWheel"
-								@pointerdown="startPan"
-								@pointermove="movePointer"
-								@pointerup="endPointer"
-								@pointercancel="endPointer"
+								@pointerdown.capture="startPan"
+								@pointermove.capture="movePointer"
+								@pointerup.capture="endPointer"
+								@pointercancel.capture="endPointer"
 							>
 								<div
 									data-dependency-control
