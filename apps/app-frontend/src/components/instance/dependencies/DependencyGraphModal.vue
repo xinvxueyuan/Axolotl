@@ -764,7 +764,7 @@ defineExpose({ show, hide, setItems })
 		:max-width="'80vw'"
 		:width="'80vw'"
 		:style="{ height: '80vh', maxHeight: '80vh' }"
-		:scrollable="true"
+		:scrollable="false"
 		:no-padding="true"
 	>
 		<template #title>
@@ -1208,12 +1208,15 @@ defineExpose({ show, hide, setItems })
 <style scoped>
 :deep([data-modal-content]) {
 	display: flex;
+	height: 100%;
 	min-height: 0;
 	flex: 1 1 auto;
 	flex-direction: column;
 }
 
 .dependency-graph-viewport {
+	min-height: 0;
+	height: 100%;
 	background-color: var(--surface-1);
 	background-image:
 		linear-gradient(color-mix(in srgb, var(--surface-4) 76%, transparent) 1px, transparent 1px),
