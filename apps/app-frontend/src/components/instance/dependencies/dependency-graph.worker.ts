@@ -48,8 +48,11 @@ function tick() {
 			if (distanceSquared > 90000) continue
 			const strength = 4200 / distanceSquared
 			const distance = Math.sqrt(distanceSquared)
-			const fx = (dx / distance) * strength
-			const fy = (dy / distance) * strength
+			const overlapX = Math.max(0, 244 - Math.abs(dx))
+			const overlapY = Math.max(0, 92 - Math.abs(dy))
+			const collision = overlapX > 0 && overlapY > 0 ? Math.max(overlapX, overlapY) * 0.08 : 0
+			const fx = (dx / distance) * (strength + collision)
+			const fy = (dy / distance) * (strength + collision)
 			force.x += fx
 			force.y += fy
 			const otherForce = forces.get(other.id)!
